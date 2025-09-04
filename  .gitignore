@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Виртуальные окружения и инструменты
+.venv/
+venv/
+env/
+.python-version
+
+# Сборки и упаковка
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# Тесты и отчёты о покрытии
+.pytest_cache/
+.coverage*
+htmlcov/
+coverage.xml
+
+# Проверки типов, линтеры, автоформатеры
+.mypy_cache/
+.pytype/
+.pyre/
+.ruff_cache/
+
+# Ноутбуки Jupyter
+.ipynb_checkpoints/
+
+# Логи
+logs/
+*.log
+
+# Секреты и переменные окружения (кроме шаблона)
+.env
+.env.*
+!.env.example
+.envrc
+
+# Редакторы и IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Мусор от операционных систем
+.DS_Store
+Thumbs.db
+
+# Данные проекта (каталоги для временных/сырых выгрузок и кешей API)
+data/
+downloads/
+tmp/
+cache/
+
+# Разрешаем оставлять "пустые" папки с .gitkeep
+!data/.gitkeep
+!downloads/.gitkeep
+!tmp/.gitkeep
+!cache/.gitkeep
+
+# Дампы БД и локальные артефакты
+*.dump
+*.bak
+*.backup
+*.psql
