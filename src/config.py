@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 @dataclass(frozen=True)
 class Settings:
     """
@@ -29,5 +30,6 @@ class Settings:
     # User-Agent для запросов к HH API
     user_agent: str = os.getenv("USER_AGENT", "Vacancy-Vault/1.0")
 
-# Единственный экземпляр настроек, импортируем его как: from .config import settings
+
+# Единственный экземпляр настроек, импортируем его как: from src.config import settings
 settings = Settings()
