@@ -1,83 +1,53 @@
 from __future__ import annotations
-from typing import Dict, Any
-from time import sleep
-
-from src.api_client import HHClient
-from src.config import settings
-from src.db import upsert_company, upsert_vacancy
-from src.utils import midpoint_salary
+from typing import Any, Dict
+from .config import settings
+from .api_client import HHClient
+from .db import upsert_company, upsert_vacancy
 
 
-def _normalize_company(emp: Dict[str, Any]) -> Dict[str, Any]:
-    """Приводим структуру работодателя к нашей схеме companies."""
+def _normalize_company(j: Dict[str, Any]) -> Dict[str, Any]:
+    """Приводим ответ /employers/{id} к схеме таблицы companies."""
+    area = (j.get("area") or {}).get("name")
     return {
-        "id": int(emp["id"]),
-        "name": emp.get("name") or "",
-        "area": (emp.get("area") or {}).get("name"),
-        "open_vacancies": emp.get("open_vacancies"),
-        "alternate_url": emp.get("alternate_url") or emp.get("url"),
+        "id": int(j["id"]),
+        "name": j.get("name"),
+        "url": j.get("alternate_url"),
+        "area": area,
+        "description": j.get("description"),
     }
 
 
-def _normalize_vacancy(v: Dict[str, Any], fallback_employer_id: int) -> Dict[str, Any]:
-    """Приводим структуру вакансии к нашей схеме vacancies."""
-    employer_id = (
-        (v.get("employer") or {}).get("id")
-        or fallback_employer_id
-    )
-    # HH может отдавать строки id приводим к int
-    employer_id = int(employer_id) if employer_id is not None else None
-
-    # Название вакансии в HH хранится в поле 'name'
-    title = v.get("name") or v.get("profession") or v.get("title") or ""
-
-    # Зарплата объект salary {from, to, currency} или None
-    sal = v.get("salary") or {}
-    s_from = sal.get("from")
-    s_to = sal.get("to")
-    curr = sal.get("currency")
-
+def _normalize_vacancy(item: Dict[str, Any], employer_id: int) -> Dict[str, Any]:
+    """Приводим элемент из /vacancies к схеме таблицы vacancies."""
+    salary = item.get("salary") or {}
+    area = (item.get("area") or {}).get("name")
+    snippet = item.get("snippet") or {}
     return {
-        "id": int(v["id"]),
-        "company_id": employer_id,
-        "title": title,  # у нас NOT NULL - пустая строка допустима, но чаще 'name' есть
-        "url": v.get("alternate_url") or v.get("url"),
-        "salary_from": s_from,
-        "salary_to": s_to,
-        "salary_currency": curr,
-        "salary_avg": midpoint_salary(s_from, s_to),
-        "published_at": v.get("published_at"),
+        "id": int(item["id"]),
+        "employer_id": employer_id,
+        "name": item.get("name"),
+        "salary_from": salary.get("from"),
+        "salary_to": salary.get("to"),
+        "currency": salary.get("currency"),
+        "published_at": item.get("published_at"),  # ISO-строка - psycopg2 примет
+        "url": item.get("alternate_url"),
+        "area": area,
+        "requirement": snippet.get("requirement"),
+        "responsibility": snippet.get("responsibility"),
     }
 
 
-def load_companies_and_vacancies() -> None:
-    """
-    Грузим работодателей из settings.employer_ids и их вакансии.
-    Для каждой записи делаем upsert в БД.
-    """
-    client = HHClient()
-
+def load_companies_and_vacancies(only_python: bool = True) -> None:
+    """Основная загрузка: компании + их вакансии."""
+    client = HHClient()  # возьмёт USER_AGENT из config по умолчанию
     if not settings.employer_ids:
-        print("EMPLOYER_IDS пуст - заполните .env")
-        return
+        raise RuntimeError("EMPLOYER_IDS пуст — заполни .env (минимум 10 id)")
 
     for emp_id in settings.employer_ids:
-        # 1) Работодатель
-        emp = client.get_employer(emp_id)
-        upsert_company(_normalize_company(emp))
+        # компания
+        company_raw = client.get_employer(emp_id)
+        upsert_company(_normalize_company(company_raw))
 
-        # 2) Вакансии работодателя (постранично)
-        for v in client.iter_vacancies_by_employer(emp_id):
-            item = _normalize_vacancy(v, emp_id)
-            # Подстрахуемся: company_id и title должны быть заданы
-            if item["company_id"] is None:
-                # пропустим такую вакансию, логируем
-                print(f"Пропуск вакансии {item['id']}: нет employer_id")
-                continue
-            if not item["title"]:
-                # крайне редкий кейс; пустое значение допустимо, но лучше логировать
-                print(f"Вакансия {item['id']} без title — сохраняю пустую строку")
-            upsert_vacancy(item)
-
-        # Немного уважаем rate limit API
-        sleep(0.2)
+        # вакансии
+        for v in client.iter_vacancies_by_employer(emp_id, only_python=only_python):
+            upsert_vacancy(_normalize_vacancy(v, emp_id))

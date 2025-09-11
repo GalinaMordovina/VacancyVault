@@ -1,107 +1,115 @@
+# src/db_manager.py
 from __future__ import annotations
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple
 import psycopg2
-from types import TracebackType
-from src.config import settings
-
+from contextlib import contextmanager
+from .config import settings
 
 class DBManager:
-    """Работа с БД PostgreSQL (чтение/запросы)."""
+    """Методы для выборок из БД (psycopg2)."""
 
-    def __init__(self) -> None:
-        self.conn = psycopg2.connect(
-            host=settings.db_host,
-            port=settings.db_port,
+    @staticmethod
+    @contextmanager
+    def _connect():
+        """
+        Безопасное подключение:
+        - открываем conn;
+        - внутри блока делаем cursor/execute;
+        - на выходе commit/rollback;
+        - В ЛЮБОМ случае закрываем conn (finally).
+        """
+        conn = psycopg2.connect(
             dbname=settings.db_name,
             user=settings.db_user,
             password=settings.db_password,
+            host=settings.db_host,
+            port=settings.db_port,
         )
-        self.conn.autocommit = True
+        try:
+            yield conn            # работа с conn внутри with
+            conn.commit()         # явный commit при успехе
+        except Exception:
+            conn.rollback()       # откат при ошибке
+            raise
+        finally:
+            conn.close()          # закрыть соединение
 
-    # этот метод добавила
-    def close(self) -> None:
-        """Закрывает соединение с БД."""
-        if self.conn:
-            self.conn.close()
-
-    # (опционально) чтобы можно было писать: with DBManager() as mgr:
-    def __enter__(self) -> "DBManager":
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self.close()
-
-    # Методы по заднию
+    # 1) компании и кол-во вакансий
     def get_companies_and_vacancies_count(self) -> List[Tuple[str, int]]:
-        """Список компаний и количество вакансий у каждой."""
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT c.name, COUNT(v.vacancy_id) AS vacancies_count
-                FROM companies c
-                LEFT JOIN vacancies v ON v.company_id = c.employer_id
-                GROUP BY c.employer_id, c.name
-                ORDER BY vacancies_count DESC, c.name;
-                """
-            )
-            return cur.fetchall()
+        sql = """
+        SELECT c.name, COUNT(v.id) AS vacancies_count
+        FROM companies c
+        LEFT JOIN vacancies v ON v.employer_id = c.id
+        GROUP BY c.id, c.name
+        ORDER BY vacancies_count DESC, c.name;
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return cur.fetchall()
 
-    def get_all_vacancies(self) -> List[Tuple[str, str, Optional[float], str]]:
-        """Все вакансии: компания, название, средняя з/п, ссылка."""
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT c.name, v.title, v.salary_avg, v.url
-                FROM vacancies v
-                JOIN companies c ON c.employer_id = v.company_id
-                ORDER BY c.name, v.title;
-                """
-            )
-            return cur.fetchall()
+    # 2) все вакансии
+    def get_all_vacancies(self) -> List[Tuple[str, str, Any, Any, str]]:
+        sql = """
+        SELECT c.name, v.name, v.salary_from, v.salary_to, v.url
+        FROM vacancies v
+        JOIN companies c ON c.id = v.employer_id
+        ORDER BY c.name, v.name;
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return cur.fetchall()
 
-    def get_avg_salary(self) -> Optional[float]:
-        """Средняя зарплата по всем вакансиям (по salary_avg)."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT AVG(salary_avg) FROM vacancies WHERE salary_avg IS NOT NULL;")
-            row = cur.fetchone()
-            return row[0] if row else None
+    # 3) средняя зарплата
+    def get_avg_salary(self) -> float | None:
+        sql = """
+        SELECT AVG((COALESCE(salary_from, salary_to)
+                 +  COALESCE(salary_to, salary_from)) / 2.0)
+        FROM vacancies
+        WHERE salary_from IS NOT NULL OR salary_to IS NOT NULL;
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                row = cur.fetchone()
+                return row[0] if row else None
 
+    # 4) выше средней
     def get_vacancies_with_higher_salary(self) -> List[Tuple[str, str, float, str]]:
-        """Вакансии с зарплатой выше средней."""
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH avg_salary AS (
-                    SELECT AVG(salary_avg) AS avg_val
-                    FROM vacancies
-                    WHERE salary_avg IS NOT NULL
-                )
-                SELECT c.name, v.title, v.salary_avg, v.url
-                FROM vacancies v
-                JOIN companies c ON c.employer_id = v.company_id, avg_salary a
-                WHERE v.salary_avg IS NOT NULL AND v.salary_avg > a.avg_val
-                ORDER BY v.salary_avg DESC;
-                """
-            )
-            return cur.fetchall()
+        sql = """
+        WITH avg_sal AS (
+          SELECT AVG((COALESCE(salary_from, salary_to)
+                   + COALESCE(salary_to, salary_from)) / 2.0) AS a
+          FROM vacancies
+          WHERE salary_from IS NOT NULL OR salary_to IS NOT NULL
+        )
+        SELECT c.name,
+               v.name,
+               ((COALESCE(v.salary_from, v.salary_to)
+               +  COALESCE(v.salary_to, v.salary_from)) / 2.0) AS salary_mid,
+               v.url
+        FROM vacancies v
+        JOIN companies c ON c.id = v.employer_id, avg_sal
+        WHERE ((COALESCE(v.salary_from, v.salary_to)
+              +  COALESCE(v.salary_to, v.salary_from)) / 2.0) > avg_sal.a
+        ORDER BY salary_mid DESC, c.name, v.name;
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                return cur.fetchall()
 
-    def get_vacancies_with_keyword(self, keyword: str) -> List[Tuple[str, str, Optional[float], str]]:
-        """Вакансии, где в названии есть keyword (LIKE, без регистра)."""
-        pattern = f"%{keyword.lower()}%"
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT c.name, v.title, v.salary_avg, v.url
-                FROM vacancies v
-                JOIN companies c ON c.employer_id = v.company_id
-                WHERE LOWER(v.title) LIKE %s
-                ORDER BY c.name, v.title;
-                """,
-                (pattern,),
-            )
-            return cur.fetchall()
+    # 5) поиск по ключу
+    def get_vacancies_with_keyword(self, keyword: str) -> List[Tuple[str, str, str]]:
+        sql = """
+        SELECT c.name, v.name, v.url
+        FROM vacancies v
+        JOIN companies c ON c.id = v.employer_id
+        WHERE LOWER(v.name) LIKE '%' || LOWER(%s) || '%'
+        ORDER BY c.name, v.name;
+        """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (keyword,))
+                return cur.fetchall()
