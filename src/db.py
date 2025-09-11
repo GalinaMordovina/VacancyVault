@@ -1,11 +1,11 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any
 import psycopg2
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT,  connection as PGConnection
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT,  connection as psycopg2_connection
 from src.config import settings
 
 
-def _connect(database: Optional[str] = None) -> PGConnection:
+def _connect(database: Optional[str] = None) -> psycopg2_connection:
     """Единая точка подключения к БД."""
     return psycopg2.connect(
         host=settings.db_host,

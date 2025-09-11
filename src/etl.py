@@ -1,15 +1,24 @@
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from time import sleep
-
 from src.api_client import HHClient
-from src.config import settings
 from src.db import upsert_company, upsert_vacancy
 from src.utils import midpoint_salary
+from src.config import settings
+
+# Тесты могут подменить это значение. В проде обычно пусто.
+EMPLOYER_IDS: List[int] = []
+
+
+def _effective_employer_ids() -> List[int]:
+    """Список employer_id: сначала пробуем локальную переменную,
+    если она пустая,то берём из .env (settings.employer_ids)."""
+    ids = EMPLOYER_IDS or settings.employer_ids
+    # приведение к int и фильтр мусора
+    return [int(x) for x in ids if str(x).strip()]
 
 
 def _normalize_company(emp: Dict[str, Any]) -> Dict[str, Any]:
-    """Приводим структуру работодателя к нашей схеме companies."""
     return {
         "id": int(emp["id"]),
         "name": emp.get("name") or "",
@@ -20,18 +29,12 @@ def _normalize_company(emp: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _normalize_vacancy(v: Dict[str, Any], fallback_employer_id: int) -> Dict[str, Any]:
-    """Приводим структуру вакансии к нашей схеме vacancies."""
-    employer_id = (
-        (v.get("employer") or {}).get("id")
-        or fallback_employer_id
-    )
-    # HH может отдавать строки id приводим к int
-    employer_id = int(employer_id) if employer_id is not None else None
+    # employer_id может быть в объекте employer, а может отсутствовать тогда берём fallback
+    raw_emp_id: Optional[str | int] = (v.get("employer") or {}).get("id") or fallback_employer_id
+    employer_id: Optional[int] = int(raw_emp_id) if raw_emp_id is not None else None
 
-    # Название вакансии в HH хранится в поле 'name'
     title = v.get("name") or v.get("profession") or v.get("title") or ""
 
-    # Зарплата объект salary {from, to, currency} или None
     sal = v.get("salary") or {}
     s_from = sal.get("from")
     s_to = sal.get("to")
@@ -40,7 +43,7 @@ def _normalize_vacancy(v: Dict[str, Any], fallback_employer_id: int) -> Dict[str
     return {
         "id": int(v["id"]),
         "company_id": employer_id,
-        "title": title,  # у нас NOT NULL - пустая строка допустима, но чаще 'name' есть
+        "title": title,
         "url": v.get("alternate_url") or v.get("url"),
         "salary_from": s_from,
         "salary_to": s_to,
@@ -51,33 +54,24 @@ def _normalize_vacancy(v: Dict[str, Any], fallback_employer_id: int) -> Dict[str
 
 
 def load_companies_and_vacancies() -> None:
-    """
-    Грузим работодателей из settings.employer_ids и их вакансии.
-    Для каждой записи делаем upsert в БД.
-    """
-    client = HHClient()
-
-    if not settings.employer_ids:
-        print("EMPLOYER_IDS пуст - заполните .env")
+    ids = _effective_employer_ids()
+    if not ids:
+        print("Нет employer_id. Укажите их в .env (EMPLOYER_IDS=41862,42600,...) или задайте etl.EMPLOYER_IDS в коде.")
         return
 
-    for emp_id in settings.employer_ids:
+    client = HHClient()
+    for emp_id in ids:
         # 1) Работодатель
         emp = client.get_employer(emp_id)
         upsert_company(_normalize_company(emp))
 
-        # 2) Вакансии работодателя (постранично)
+        # 2) Его вакансии (постранично)
         for v in client.iter_vacancies_by_employer(emp_id):
             item = _normalize_vacancy(v, emp_id)
-            # Подстрахуемся: company_id и title должны быть заданы
             if item["company_id"] is None:
-                # пропустим такую вакансию, логируем
-                print(f"Пропуск вакансии {item['id']}: нет employer_id")
+                # странный случай — пропустим
                 continue
-            if not item["title"]:
-                # крайне редкий кейс; пустое значение допустимо, но лучше логировать
-                print(f"Вакансия {item['id']} без title — сохраняю пустую строку")
             upsert_vacancy(item)
 
-        # Немного уважаем rate limit API
-        sleep(0.2)
+        # limit API
+        sleep(0.15)
