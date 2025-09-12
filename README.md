@@ -9,7 +9,7 @@ Python 3.12 · PostgreSQL · requests · psycopg2 · pytest · flake8 · mypy
 
 ### 1) Клонирование и окружение
 ```
-git clone https://github.com/<your-username>/VacancyVault.git
+git clone https://github.com/GalinaMordovina/VacancyVault.git
 cd VacancyVault
 python -m venv .venv
 
