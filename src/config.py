@@ -19,6 +19,7 @@ class Settings:
     db_name: str = os.getenv("DB_NAME", "vacancy_vault")
     db_user: str = os.getenv("DB_USER", "postgres")
     db_password: str = os.getenv("DB_PASSWORD", "postgres")
+    db_init_db: str = os.getenv("DB_INIT_DB", "postgres")  # Новая настройка БД
 
     # Список employer_ids (через запятую) в кортеж int
     employer_ids: tuple[int, ...] = tuple(

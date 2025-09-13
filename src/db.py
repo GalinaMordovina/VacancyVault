@@ -21,7 +21,7 @@ def create_database_if_not_exists() -> None:
     con = psycopg2.connect(
         host=settings.db_host,
         port=settings.db_port,
-        dbname="postgres",
+        dbname=settings.db_init_db,  # Читаем из конфига
         user=settings.db_user,
         password=settings.db_password,
     )
