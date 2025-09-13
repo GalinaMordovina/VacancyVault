@@ -1,16 +1,29 @@
-# This is a sample Python script.
-
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+from __future__ import annotations
+import argparse
+from src.view import cmd_init_db, cmd_load_data, cmd_menu, print_help
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="Vacancy-Vault")
+    parser.add_argument(
+        "command",
+        nargs="?",                      # аргумент необязательный
+        choices=["init-db", "load-data", "menu"],
+        help="Команда: init-db | load-data | menu",
+    )
+    args = parser.parse_args()
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    cmd = args.command or "menu"       # если не передали команду, идём в меню
+
+    if cmd == "init-db":
+        cmd_init_db()
+    elif cmd == "load-data":
+        cmd_load_data()
+    elif cmd == "menu":
+        cmd_menu()
+    else:
+        print_help()
+
+
+if __name__ == "__main__":
+    main()
